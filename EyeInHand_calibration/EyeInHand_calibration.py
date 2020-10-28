@@ -367,7 +367,7 @@ if __name__ == '__main__':
     # robot instruction interval, to smooth the movement of UR5
     interval = 1
     # Initial robot to a fixed position, where chessboard is located in the center of camera
-    robot_arm_initialization()
+    # robot_arm_initialization()
 
     # initial camera
     init_params = sl.InitParameters()
@@ -378,13 +378,13 @@ if __name__ == '__main__':
     zed = sl.Camera()
 
     # start camera
-    err = zed.open(init_params)
-    if err != sl.ERROR_CODE.SUCCESS:
-        print('Failed to open ZED!!!')
-        zed.close()
-        exit(1)
-    else:
-        print('=> starting to calculate object to camera matrix (cMo)')
+    # err = zed.open(init_params)
+    # if err != sl.ERROR_CODE.SUCCESS:
+    #     print('Failed to open ZED!!!')
+    #     zed.close()
+    #     exit(1)
+    # else:
+    #     print('=> starting to calculate object to camera matrix (cMo)')
 
     acquisition_num = args.data_num
     result_dir = args.result_dir
@@ -417,22 +417,50 @@ if __name__ == '__main__':
     # load result files
     cMo_files = sorted(glob.glob(os.path.join(result_dir, 'Object2CameraMatrix_*.txt')))
     bMe_files = sorted(glob.glob(os.path.join(result_dir, 'End2BaseMatrix_*.txt')))
-    # cMo1 and bMe1
-    cMo1 = np.loadtxt(cMo_files[0], delimiter=',')
-    bMe1 = np.loadtxt(bMe_files[0], delimiter=',')
 
-    # cMo2 and bMe2
-    cMo2 = np.loadtxt(cMo_files[4], delimiter=',')
-    bMe2 = np.loadtxt(bMe_files[4], delimiter=',')
+    num = acquisition_num
+    AA = []
+    BB = []
 
-    A = np.linalg.inv(bMe2) * bMe1
-    B = cMo2 * np.linalg.inv(cMo1)
-    eMc = AXXB_Solver(A, B)
+    for i in range(num):
+        # cMo1 and bMe1
+        cMo1 = np.loadtxt(cMo_files[i % acquisition_num], delimiter=',')
+        bMe1 = np.loadtxt(bMe_files[i % acquisition_num], delimiter=',')
+
+        # cMo2 and bMe2
+        cMo2 = np.loadtxt(cMo_files[(i + 1) % acquisition_num], delimiter=',')
+        bMe2 = np.loadtxt(bMe_files[(i + 1) % acquisition_num], delimiter=',')
+
+        A = np.linalg.inv(bMe2) * bMe1
+        B = cMo2 * np.linalg.inv(cMo1)
+
+        AA.append(A)
+        BB.append(B)
+
+    AA = np.array(AA).reshape((4, -1))
+    BB = np.array(BB).reshape((4, -1))
+
+    eMc = AXXB_Solver(AA, BB)
     print('Camera to end-effector matrix: {}'.format(eMc))
-    print('AX: {}'.format(A*eMc))
-    print('XB: {}'.format(eMc*B))
 
+    # error verification
+    total_errs = np.zeros((4, 4), dtype=np.float32)
+    for i in range(acquisition_num):
+        print('=> calculating the error between position {} and {}'.format(i, i+3))
+        # cMo1 and bMe1
+        cMo1 = np.loadtxt(cMo_files[i % acquisition_num], delimiter=',')
+        bMe1 = np.loadtxt(bMe_files[i % acquisition_num], delimiter=',')
 
+        # cMo2 and bMe2
+        cMo2 = np.loadtxt(cMo_files[(i + 3) % acquisition_num], delimiter=',')
+        bMe2 = np.loadtxt(bMe_files[(i + 3) % acquisition_num], delimiter=',')
+
+        err = bMe1 * eMc * cMo1 - bMe2 * eMc * cMo2
+        # print('the error between position {} and {}: \n{}'.format(i, i+3, err))
+        total_errs = total_errs + err
+
+    average_err = total_errs / acquisition_num
+    print("average errors: {}".format(average_err))
 
 
     zed.close()
